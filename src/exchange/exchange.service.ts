@@ -7,23 +7,19 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
-import {
-  BinanceResponse,
-  BitmartResponse,
-  FormattedResponse,
-} from './interfaces/exchange.types';
+import { FormattedResponse } from './interfaces/exchange.types';
 import { OrderBookQueryDto } from './dto/order-book-query.dto';
 import { ExchangeEnum } from '../common/enums/exchange.enum';
-import {
-  isBinanceResponse,
-  isBitmartResponse,
-} from './utils/exchange.type-guards';
+import { UrlService } from './services/url.service';
+import { ResponseService } from './services/response.service';
 
 @Injectable()
 export class ExchangeService {
   constructor(
     private httpService: HttpService,
     private configService: ConfigService,
+    private urlService: UrlService,
+    private responseService: ResponseService,
   ) {}
 
   private readonly logger = new Logger(ExchangeService.name);
@@ -33,12 +29,12 @@ export class ExchangeService {
 
     await this.validateCurrencyPair(exchange, base, quote);
 
-    const url = this.constructUrl(exchange, base, quote, limit);
+    const url = this.urlService.constructUrl(exchange, base, quote, limit);
     this.logger.log(`Fetching order book for ${exchange}: ${base}/${quote}`);
 
     try {
       const response = await firstValueFrom(this.httpService.get(url));
-      return this.formatResponse(exchange, response.data);
+      return this.responseService.formatResponse(exchange, response.data);
     } catch (error) {
       this.logger.error(
         `Error fetching order book for ${exchange}: ${error.message}`,
@@ -47,62 +43,6 @@ export class ExchangeService {
         `Failed to fetch order book: ${error.message}`,
       );
     }
-  }
-
-  private constructUrl(
-    exchange: ExchangeEnum,
-    base: string,
-    quote: string,
-    limit: number = 20,
-  ): string {
-    const apiUrl = this.configService.get<string>(exchange);
-
-    if (!apiUrl) {
-      throw new Error(`API URL for ${exchange} not found in configuration`);
-    }
-
-    if (exchange === ExchangeEnum.BINANCE) {
-      return `${apiUrl}/api/v3/depth?symbol=${base}${quote}&limit=${limit}`;
-    } else if (exchange === ExchangeEnum.BITMART) {
-      return `${apiUrl}/spot/quotation/v3/books?symbol=${base}_${quote}&limit=${limit}`;
-    } else {
-      throw new Error('Unsupported exchange');
-    }
-  }
-
-  private formatResponse(
-    exchange: ExchangeEnum,
-    data: BinanceResponse | BitmartResponse,
-  ): FormattedResponse {
-    const formattedResponse: FormattedResponse = {
-      timestamp: new Date().toISOString(),
-      bids: [],
-      asks: [],
-    };
-
-    switch (exchange) {
-      case ExchangeEnum.BINANCE:
-        if (isBinanceResponse(data)) {
-          formattedResponse.bids = data.bids;
-          formattedResponse.asks = data.asks;
-        }
-        break;
-
-      case ExchangeEnum.BITMART:
-        if (isBitmartResponse(data)) {
-          formattedResponse.timestamp = new Date(
-            parseInt(data.data.ts),
-          ).toISOString();
-          formattedResponse.bids = data.data.bids;
-          formattedResponse.asks = data.data.asks;
-        }
-        break;
-
-      default:
-        throw new Error('Invalid exchange type in formatResponse');
-    }
-
-    return formattedResponse;
   }
 
   async getAvailableCurrencies(
